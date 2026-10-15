@@ -1,0 +1,7 @@
+data:
+  raw_path: data/raw/batch_1.csv
+  clean_path: data/processed/clean.csv
+  train_path: data/processed/train.csv
+  holdout_path: data/holdout/test.csv
+  test_size: 0.2
+  seed: 42
