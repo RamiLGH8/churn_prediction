@@ -1,0 +1,43 @@
+stages:
+  clean:
+    cmd: mkdir -p data/processed && python3 src/clean.py
+    deps:
+      - src/clean.py
+      - data/raw/batch_1.csv
+    params:
+      - data.raw_path
+      - data.clean_path
+    outs:
+      - data/processed/clean.csv
+
+  split:
+    cmd: mkdir -p data/holdout && python3 src/split.py
+    deps:
+      - src/split.py
+      - data/processed/clean.csv
+    params:
+      - data.clean_path
+      - data.train_path
+      - data.holdout_path
+      - data.test_size
+      - data.seed
+    outs:
+      - data/processed/train.csv
+      - data/holdout/test.csv
+
+  feature_engineering:
+    cmd: python3 src/features.py
+    deps:
+      - src/features.py
+      - data/processed/train.csv
+      - data/holdout/test.csv
+    params:
+      - data.train_path
+      - data.holdout_path
+      - data.train_features_path
+      - data.holdout_features_path
+      - data.preprocessor_path
+    outs:
+      - data/processed/train_features.csv
+      - data/holdout/test_features.csv
+      - models/preprocessor.joblib
