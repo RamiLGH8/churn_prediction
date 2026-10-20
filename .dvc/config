@@ -1,4 +1,4 @@
 [core]
-    remote = origin
-['remote "origin"']
+    remote = dagshub
+['remote "dagshub"']
     url = https://dagshub.com/RamiLGH8/churn_prediction.dvc
