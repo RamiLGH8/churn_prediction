@@ -3,8 +3,8 @@ data:
   clean_path: data/processed/clean.csv
   train_path: data/processed/train.csv
   holdout_path: data/holdout/test.csv
-  train_features_path: data/processed/train_features.csv
-  holdout_features_path: data/holdout/test_features.csv
+  train_features_path: data/processed/batch_1_train.csv
+  holdout_features_path: data/holdout/batch_1_test.csv
   preprocessor_path: models/preprocessor.joblib
   test_size: 0.2
   seed: 42

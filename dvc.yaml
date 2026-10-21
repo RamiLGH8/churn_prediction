@@ -38,6 +38,6 @@ stages:
       - data.holdout_features_path
       - data.preprocessor_path
     outs:
-      - data/processed/train_features.csv
-      - data/holdout/test_features.csv
+      - data/processed/batch_1_train.csv
+      - data/holdout/batch_1_test.csv
       - models/preprocessor.joblib

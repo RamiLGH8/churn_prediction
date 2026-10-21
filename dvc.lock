@@ -60,25 +60,25 @@ stages:
       size: 421264
     - path: src/features.py
       hash: md5
-      md5: 9eb6a5bacfb2a59f4dc37502ca979aca
-      size: 10724
+      md5: 77066d97ca392328a9badcf6180a94e2
+      size: 11511
     params:
       params.yaml:
-        data.holdout_features_path: data/holdout/test_features.csv
+        data.holdout_features_path: data/holdout/batch_1_test.csv
         data.holdout_path: data/holdout/test.csv
         data.preprocessor_path: models/preprocessor.joblib
-        data.train_features_path: data/processed/train_features.csv
+        data.train_features_path: data/processed/batch_1_train.csv
         data.train_path: data/processed/train.csv
     outs:
-    - path: data/holdout/test_features.csv
+    - path: data/holdout/batch_1_test.csv
       hash: md5
       md5: 9dfe9ce6a69f2460c82c735d2afe3670
       size: 183003
-    - path: data/processed/train_features.csv
+    - path: data/processed/batch_1_train.csv
       hash: md5
       md5: d9496feb20203cf637abc3c244d897ed
       size: 728649
     - path: models/preprocessor.joblib
       hash: md5
-      md5: f07ffef4127615b0af6dd08b0c916bb5
-      size: 6149
+      md5: f161fec0fd7215d93edaeba535ff4dac
+      size: 6197

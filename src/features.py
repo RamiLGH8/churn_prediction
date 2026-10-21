@@ -1,10 +1,4 @@
-"""Cleaning and feature preprocessing for the churn model.
-
-The transformer in this module is deliberately row preserving so it can be
-used safely in a scikit-learn Pipeline. Use ``clean_dataset`` before splitting
-the raw dataset when dataset-level cleaning (for example, duplicate removal
-and target encoding) is required.
-"""
+"""Reusable cleaning, feature engineering, and model preprocessing."""
 
 from __future__ import annotations
 
@@ -47,8 +41,7 @@ SERVICE_MAP = {
     "Yes": 1,
 }
 
-# These remain binary 0/1 and are intentionally not standardized.
-BINARY_FEATURES = [
+BASE_BINARY_FEATURES = [
     "gender",
     "SeniorCitizen",
     "Partner",
@@ -62,21 +55,23 @@ BINARY_FEATURES = [
     "StreamingTV",
     "StreamingMovies",
     "PaperlessBilling",
-    "is_month_to_month",
 ]
 
-NUMERIC_FEATURES = [
-    "tenure",
-    "MonthlyCharges",
-    "TotalCharges",
+BASE_NUMERIC_FEATURES = ["tenure", "MonthlyCharges", "TotalCharges"]
+ONE_HOT_FEATURES = ["InternetService", "Contract", "PaymentMethod"]
+
+ENGINEERED_FEATURES = (
     "avg_monthly_spend",
     "charge_delta",
     "n_services",
-]
+    "is_month_to_month",
+)
 
-# InternetService also has more than two categories, so it must be encoded
-# alongside the two explicitly requested multi-category columns.
-ONE_HOT_FEATURES = ["InternetService", "Contract", "PaymentMethod"]
+ENGINEERED_NUMERIC_FEATURES = {
+    "avg_monthly_spend",
+    "charge_delta",
+    "n_services",
+}
 
 REQUIRED_FEATURES = [
     "gender",
@@ -96,13 +91,11 @@ REQUIRED_FEATURES = [
 
 
 def _strip_strings(series: pd.Series) -> pd.Series:
-    """Trim strings and turn empty strings into missing values."""
     if not (
         pd.api.types.is_object_dtype(series)
         or pd.api.types.is_string_dtype(series)
     ):
         return series
-
     stripped = series.map(
         lambda value: value.strip() if isinstance(value, str) else value
     )
@@ -110,23 +103,50 @@ def _strip_strings(series: pd.Series) -> pd.Series:
 
 
 def _encode_binary(series: pd.Series, mapping: dict[str, int]) -> pd.Series:
-    """Encode labels while preserving input that is already binary."""
     mapped = series.map(mapping)
     numeric = pd.to_numeric(series, errors="coerce")
     numeric = numeric.where(numeric.isin([0, 1]))
     return mapped.fillna(numeric).astype("float64")
 
 
+def normalize_engineered_features(
+    enabled_features: Iterable[str] | None,
+) -> tuple[str, ...]:
+    """Validate and normalize the requested engineered feature names."""
+    if enabled_features is None:
+        return ENGINEERED_FEATURES
+
+    normalized = tuple(dict.fromkeys(enabled_features))
+    unknown = sorted(set(normalized) - set(ENGINEERED_FEATURES))
+    if unknown:
+        raise ValueError(f"Unknown engineered features: {unknown}")
+    return normalized
+
+
 class FeatureEngineer(BaseEstimator, TransformerMixin):
-    """Clean raw feature values, encode binary fields, and add features."""
+    """Clean raw values and create a configurable set of features."""
+
+    def __init__(self, enabled_features: Iterable[str] | None = None):
+        self.enabled_features = enabled_features
 
     def fit(self, X: pd.DataFrame, y=None):
         self._validate_input(X)
+        self.enabled_features_ = normalize_engineered_features(
+            self.enabled_features
+        )
         self.feature_names_in_ = np.asarray(X.columns, dtype=object)
         return self
 
     def transform(self, X: pd.DataFrame) -> pd.DataFrame:
         self._validate_input(X)
+        enabled = set(
+            getattr(
+                self,
+                "enabled_features_",
+                normalize_engineered_features(self.enabled_features),
+            )
+        )
+
         transformed = X.copy()
         transformed.columns = transformed.columns.str.strip()
         transformed = transformed.drop(columns=["customerID"], errors="ignore")
@@ -148,7 +168,6 @@ class FeatureEngineer(BaseEstimator, TransformerMixin):
             transformed[column] = _encode_binary(
                 transformed[column], mapping
             )
-
         for column in SERVICE_COLUMNS:
             transformed[column] = _encode_binary(
                 transformed[column], SERVICE_MAP
@@ -156,29 +175,31 @@ class FeatureEngineer(BaseEstimator, TransformerMixin):
 
         tenure = transformed["tenure"].replace(0, np.nan)
         average_spend = transformed["TotalCharges"] / tenure
-        transformed["avg_monthly_spend"] = average_spend.fillna(
-            transformed["MonthlyCharges"]
-        )
-        transformed["charge_delta"] = (
-            transformed["MonthlyCharges"]
-            - transformed["avg_monthly_spend"]
-        )
+        average_spend = average_spend.fillna(transformed["MonthlyCharges"])
 
-        service_count_columns = [
-            "PhoneService",
-            "OnlineSecurity",
-            "OnlineBackup",
-            "DeviceProtection",
-            "TechSupport",
-            "StreamingTV",
-            "StreamingMovies",
-        ]
-        transformed["n_services"] = (
-            transformed[service_count_columns].fillna(0).sum(axis=1)
-        )
-        transformed["is_month_to_month"] = (
-            transformed["Contract"] == "Month-to-month"
-        ).astype("int8")
+        if "avg_monthly_spend" in enabled:
+            transformed["avg_monthly_spend"] = average_spend
+        if "charge_delta" in enabled:
+            transformed["charge_delta"] = (
+                transformed["MonthlyCharges"] - average_spend
+            )
+        if "n_services" in enabled:
+            service_count_columns = [
+                "PhoneService",
+                "OnlineSecurity",
+                "OnlineBackup",
+                "DeviceProtection",
+                "TechSupport",
+                "StreamingTV",
+                "StreamingMovies",
+            ]
+            transformed["n_services"] = (
+                transformed[service_count_columns].fillna(0).sum(axis=1)
+            )
+        if "is_month_to_month" in enabled:
+            transformed["is_month_to_month"] = (
+                transformed["Contract"] == "Month-to-month"
+            ).astype("int8")
 
         return transformed
 
@@ -186,7 +207,6 @@ class FeatureEngineer(BaseEstimator, TransformerMixin):
     def _validate_input(X: pd.DataFrame) -> None:
         if not isinstance(X, pd.DataFrame):
             raise TypeError("FeatureEngineer expects a pandas DataFrame.")
-
         normalized_columns = {str(column).strip() for column in X.columns}
         missing = sorted(set(REQUIRED_FEATURES) - normalized_columns)
         if missing:
@@ -202,23 +222,19 @@ class FeatureEngineer(BaseEstimator, TransformerMixin):
             for column in input_features
             if str(column).strip() != "customerID"
         ]
-        for engineered in [
-            "avg_monthly_spend",
-            "charge_delta",
-            "n_services",
-            "is_month_to_month",
-        ]:
+        enabled = getattr(
+            self,
+            "enabled_features_",
+            normalize_engineered_features(self.enabled_features),
+        )
+        for engineered in enabled:
             if engineered not in names:
                 names.append(engineered)
         return np.asarray(names, dtype=object)
 
 
 def clean_dataset(df: pd.DataFrame) -> pd.DataFrame:
-    """Clean a complete raw dataset before train/holdout splitting.
-
-    Unlike ``FeatureEngineer.transform``, this function may remove duplicate
-    rows. It also converts the optional Churn target to 0/1.
-    """
+    """Clean a complete dataset and encode its optional target."""
     cleaned = df.copy()
     cleaned.columns = cleaned.columns.str.strip()
     cleaned = cleaned.drop_duplicates().reset_index(drop=True)
@@ -227,11 +243,12 @@ def clean_dataset(df: pd.DataFrame) -> pd.DataFrame:
     if "Churn" in cleaned.columns:
         target = _strip_strings(cleaned.pop("Churn"))
 
-    cleaned = FeatureEngineer().fit_transform(cleaned)
+    cleaned = FeatureEngineer(enabled_features=[]).fit_transform(cleaned)
 
     if target is not None:
-        target = target.reset_index(drop=True)
-        encoded_target = _encode_binary(target, {"No": 0, "Yes": 1})
+        encoded_target = _encode_binary(
+            target.reset_index(drop=True), {"No": 0, "Yes": 1}
+        )
         if encoded_target.isna().any():
             invalid = sorted(target[encoded_target.isna()].astype(str).unique())
             raise ValueError(
@@ -242,8 +259,20 @@ def clean_dataset(df: pd.DataFrame) -> pd.DataFrame:
     return cleaned
 
 
-def build_preprocessor() -> ColumnTransformer:
-    """Create the fitted-on-training-data preprocessing transformer."""
+def build_preprocessor(
+    enabled_features: Iterable[str] | None = None,
+) -> ColumnTransformer:
+    """Create preprocessing for one experiment's feature configuration."""
+    enabled = normalize_engineered_features(enabled_features)
+    numeric_features = BASE_NUMERIC_FEATURES + [
+        feature
+        for feature in enabled
+        if feature in ENGINEERED_NUMERIC_FEATURES
+    ]
+    binary_features = BASE_BINARY_FEATURES.copy()
+    if "is_month_to_month" in enabled:
+        binary_features.append("is_month_to_month")
+
     numeric_pipeline = Pipeline(
         steps=[
             ("imputer", SimpleImputer(strategy="median")),
@@ -262,8 +291,8 @@ def build_preprocessor() -> ColumnTransformer:
 
     return ColumnTransformer(
         transformers=[
-            ("numeric", numeric_pipeline, NUMERIC_FEATURES),
-            ("binary", binary_pipeline, BINARY_FEATURES),
+            ("numeric", numeric_pipeline, numeric_features),
+            ("binary", binary_pipeline, binary_features),
             ("categorical", categorical_pipeline, ONE_HOT_FEATURES),
         ],
         remainder="drop",
@@ -271,7 +300,7 @@ def build_preprocessor() -> ColumnTransformer:
 
 
 def build_feature_pipeline() -> Pipeline:
-    """Build an end-to-end cleaning and feature preprocessing pipeline."""
+    """Build the fixed DVC feature-engineering and preprocessing pipeline."""
     return Pipeline(
         steps=[
             ("features", FeatureEngineer()),
@@ -281,28 +310,20 @@ def build_feature_pipeline() -> Pipeline:
 
 
 def _to_dataframe(values, columns: list[str]) -> pd.DataFrame:
-    """Convert dense or sparse transformer output to a DataFrame."""
     if hasattr(values, "toarray"):
         values = values.toarray()
     return pd.DataFrame(values, columns=columns)
 
 
 def main() -> None:
-    """Fit preprocessing on the training split and transform both splits."""
+    """Fit preprocessing on train data and transform train and holdout."""
     with Path("params.yaml").open("r", encoding="utf-8") as file:
         config = yaml.safe_load(file)["data"]
 
-    train_path = Path(config["train_path"])
-    holdout_path = Path(config["holdout_path"])
-    train_features_path = Path(config["train_features_path"])
-    holdout_features_path = Path(config["holdout_features_path"])
-    preprocessor_path = Path(config["preprocessor_path"])
-
-    train = pd.read_csv(train_path)
-    holdout = pd.read_csv(holdout_path)
-
+    train = pd.read_csv(config["train_path"])
+    holdout = pd.read_csv(config["holdout_path"])
     if "Churn" not in train.columns or "Churn" not in holdout.columns:
-        raise ValueError("Both input splits must contain the Churn target.")
+        raise ValueError("Both data splits must contain the Churn target.")
 
     X_train = train.drop(columns="Churn")
     y_train = train["Churn"].reset_index(drop=True)
@@ -312,17 +333,20 @@ def main() -> None:
     feature_pipeline = build_feature_pipeline()
     transformed_train = feature_pipeline.fit_transform(X_train)
     transformed_holdout = feature_pipeline.transform(X_holdout)
-
     columns = list(
         feature_pipeline.named_steps[
             "preprocessor"
         ].get_feature_names_out()
     )
+
     train_features = _to_dataframe(transformed_train, columns)
     holdout_features = _to_dataframe(transformed_holdout, columns)
     train_features["Churn"] = y_train.to_numpy()
     holdout_features["Churn"] = y_holdout.to_numpy()
 
+    train_features_path = Path(config["train_features_path"])
+    holdout_features_path = Path(config["holdout_features_path"])
+    preprocessor_path = Path(config["preprocessor_path"])
     train_features_path.parent.mkdir(parents=True, exist_ok=True)
     holdout_features_path.parent.mkdir(parents=True, exist_ok=True)
     preprocessor_path.parent.mkdir(parents=True, exist_ok=True)
@@ -333,7 +357,7 @@ def main() -> None:
 
     print(f"Training features: {train_features.shape} -> {train_features_path}")
     print(f"Holdout features: {holdout_features.shape} -> {holdout_features_path}")
-    print(f"Saved fitted preprocessor to: {preprocessor_path}")
+    print(f"Fitted preprocessor: {preprocessor_path}")
 
 
 if __name__ == "__main__":
